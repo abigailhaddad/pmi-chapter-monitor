@@ -1,50 +1,60 @@
-# PMI Chapter Scraper
+# PMI Chapter Engagement Monitor
 
-Scrapes the front pages of ~150 PMI (Project Management Institute) chapter websites and produces a clean CSV.
+Automated weekly monitoring of ~150 PMI (Project Management Institute) chapter websites, analyzing content for flywheel engagement activity.
+
+## What it does
+
+1. **Scrapes** the front page of every PMI chapter website
+2. **Analyzes** content using OpenAI structured outputs against PMI's flywheel framework:
+   - **Adoption** — certifications, tools, standards, PMI-branded offerings
+   - **Advocacy** — member stories, partnerships, external visibility
+   - **Contribution** — volunteer engagement, member-led content, thought leadership
+   - **Retention** — engaging, inclusive, value-driven programming
+3. **Publishes** a static report site via GitHub Pages
+4. **Tracks changes** between runs so only updated content is re-analyzed
 
 ## Setup
 
 ```bash
 uv sync
 uv run playwright install chromium
+cp .env.example .env  # add your OPENAI_API_KEY
 ```
 
 ## Usage
 
 ```bash
-# Scrape all sites (skips already-scraped ones)
-uv run python scrape_frontpages.py
-
-# Re-scrape everything from scratch
+# Scrape all chapter front pages
 uv run python scrape_frontpages.py --fresh
 
-# Just rebuild the CSV from existing scraped data
+# Analyze content
+uv run python analyze.py
+
+# Only re-analyze chapters with changed content
+uv run python analyze.py --diff-only
+
+# Just rebuild CSV from existing scraped data
 uv run python scrape_frontpages.py --csv-only
 ```
 
-## How it works
+## Automation
 
-For each site in `pmi_chapters.csv`, the scraper tries four strategies in order until one succeeds:
+A GitHub Actions workflow runs every Monday at noon UTC:
+1. Scrapes all chapter websites
+2. Analyzes content via OpenAI
+3. Commits updated data
+4. Deploys the report site to GitHub Pages
 
-1. `requests` with a polite user-agent
-2. `requests` with browser-like headers
-3. `cloudscraper` (bypasses basic Cloudflare)
-4. `playwright` (full headless Chromium)
-
-It extracts the main content area (stripping nav, headers, footers, menus) and saves everything to `frontpages.json`. Then it generates `frontpages.csv` with a clean summary.
+Set `OPENAI_API_KEY` as a repository secret for this to work.
 
 ## Files
 
 | File | Description |
 |---|---|
-| `pmi_chapters.csv` | Input: 151 PMI chapters with name, location, and website URL |
-| `scrape_frontpages.py` | Main script: scrapes front pages and generates CSV |
-| `scrape_chapters.py` | Deep crawl script: follows internal links (up to 200 pages/site, depth 3) |
-| `frontpages.csv` | Output: clean CSV with status, title, text length, and content preview |
-| `frontpages.json` | Output: full scraped text (gitignored, regenerable) |
-
-## Results
-
-Last run: 149/151 sites scraped successfully. Two sites with persistent SSL issues:
-- PMI Northern Louisiana (pminorthernla.org)
-- PMI West Texas (pmiwtx.org)
+| `pmi_chapters.csv` | Input: 151 chapters with names, locations, and URLs |
+| `scrape_frontpages.py` | Scraper with escalating strategies (requests → cloudscraper → playwright) |
+| `analyze.py` | Flywheel analysis via OpenAI structured outputs |
+| `config.yaml` | Model, concurrency, and analysis prompt configuration |
+| `site/` | Static report site (Bootstrap + vanilla JS) |
+| `frontpages.csv` | Scraped content summary (checked in) |
+| `scrape_chapters.py` | Deep crawl variant (follows internal links, not used in weekly pipeline) |

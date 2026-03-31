@@ -6,6 +6,9 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.14.3",
     "cloudscraper>=1.2.71",
+    "openai>=2.30.0",
     "playwright>=1.58.0",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
     "requests>=2.33.1",
 ]

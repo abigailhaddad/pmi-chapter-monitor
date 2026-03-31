@@ -13,6 +13,9 @@ wheels/
 frontpages.json
 scraped_data/
 
+# Env
+.env
+
 # Logs
 scrape_log.txt
 
