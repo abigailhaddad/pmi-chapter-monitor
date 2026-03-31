@@ -38,8 +38,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = Path("scraped_data")
 CSV_PATH = Path("pmi_chapters.csv")
-MAX_PAGES_PER_SITE = 200
-MAX_DEPTH = 3
+MAX_PAGES_PER_SITE = 50
+MAX_DEPTH = 2
 REQUEST_TIMEOUT = 15
 DELAY_BETWEEN_REQUESTS = 1.0  # seconds, be polite
 USER_AGENT = (

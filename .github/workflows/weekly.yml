@@ -26,6 +26,10 @@ jobs:
       - name: Scrape front pages
         run: uv run python scrape_frontpages.py --fresh
 
+      - name: Deep crawl all sites
+        run: uv run python scrape_chapters.py
+        timeout-minutes: 120
+
       - name: Analyze content
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

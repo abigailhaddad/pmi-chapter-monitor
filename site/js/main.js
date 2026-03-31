@@ -160,15 +160,24 @@ function renderPatterns() {
         .map(([action, count]) => `<li><strong>${action.replace('_', ' ')}:</strong> ${count} findings</li>`)
         .join('');
 
+    const gapsHtml = (p.gaps || []).length
+        ? `<div class="pattern-section">
+            <h3>Gaps &amp; Opportunities</h3>
+            <p>These ${p.gaps.length} chapters had no distinctive findings beyond standard operations. They may benefit from CEP outreach:</p>
+            <p class="section-desc">${p.gaps.join(' &middot; ')}</p>
+        </div>`
+        : '';
+
     container.innerHTML = `
         <div class="pattern-section">
             <h3>Coverage</h3>
-            <p>${p.chapters_with_findings} chapters with findings, ${p.chapters_without_findings} without substantive content on their front page.</p>
+            <p>${p.chapters_with_findings} chapters with distinctive findings, ${p.chapters_without_findings} without.</p>
         </div>
         <div class="pattern-section">
             <h3>Suggested Actions</h3>
             <ul>${actionHtml}</ul>
         </div>
+        ${gapsHtml}
     `;
 }
 

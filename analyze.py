@@ -5,19 +5,24 @@ Usage:
     uv run python analyze.py              # analyze all chapters
     uv run python analyze.py --diff-only  # only report new/changed content
 
-Reads:  frontpages.json (scraped content)
-Writes: site/data/analysis.json (current analysis)
-        site/data/previous_analysis.json (rotated from prior run)
+Data sources (in priority order):
+    1. scraped_data/*.json  (deep crawl — multiple pages per site)
+    2. frontpages.json      (front pages only — fallback)
+
+Writes:
+    site/data/analysis.json          (current analysis)
+    site/data/previous_analysis.json (rotated from prior run)
 """
 
 import asyncio
 import hashlib
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
@@ -34,10 +39,14 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path("site/data")
-SCRAPED_PATH = Path("frontpages.json")
+SCRAPED_DIR = Path("scraped_data")
+FRONTPAGES_PATH = Path("frontpages.json")
+CHAPTERS_CSV = Path("pmi_chapters.csv")
 ANALYSIS_PATH = DATA_DIR / "analysis.json"
 PREVIOUS_PATH = DATA_DIR / "previous_analysis.json"
 CONFIG_PATH = Path("config.yaml")
+
+MAX_CONTENT_CHARS = 15000  # max chars sent to LLM per chapter
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +80,89 @@ class ChapterAnalysis(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Load scraped content — prefer deep crawl, fall back to front pages
+# ---------------------------------------------------------------------------
+def load_chapters() -> list[dict]:
+    """Load chapter content, merging deep crawl data when available."""
+    import csv
+
+    # Load chapter metadata
+    with open(CHAPTERS_CSV) as f:
+        chapters_meta = {row["website_url"]: row for row in csv.DictReader(f)}
+
+    # Try deep crawl data first
+    deep_crawl = {}
+    if SCRAPED_DIR.exists():
+        for p in SCRAPED_DIR.glob("*.json"):
+            if p.name.startswith("_"):
+                continue
+            with open(p) as f:
+                data = json.load(f)
+            if data.get("pages_scraped", 0) > 0:
+                deep_crawl[data["base_url"]] = data
+
+    # Load frontpages as fallback
+    frontpages = {}
+    if FRONTPAGES_PATH.exists():
+        with open(FRONTPAGES_PATH) as f:
+            for entry in json.load(f):
+                frontpages[entry["url"]] = entry
+
+    # Build unified chapter list
+    chapters = []
+    for url, meta in chapters_meta.items():
+        chapter = {
+            "chapter_name": meta["chapter_name"],
+            "state_province": meta["state_province"],
+            "country": meta["country"],
+            "url": url,
+        }
+
+        if url in deep_crawl:
+            # Combine text from multiple pages, prioritizing pages with more content
+            crawl = deep_crawl[url]
+            pages = sorted(crawl["pages"], key=lambda p: len(p.get("text", "")), reverse=True)
+            combined = []
+            total_chars = 0
+            for page in pages:
+                text = page.get("text", "").strip()
+                if not text or len(text) < 50:
+                    continue
+                # Add page with its title as a header
+                title = page.get("title", "")
+                section = f"=== {title} ===\n{text}" if title else text
+                if total_chars + len(section) > MAX_CONTENT_CHARS:
+                    # Add as much as we can fit
+                    remaining = MAX_CONTENT_CHARS - total_chars
+                    if remaining > 200:
+                        combined.append(section[:remaining])
+                    break
+                combined.append(section)
+                total_chars += len(section)
+            chapter["text"] = "\n\n".join(combined)
+            chapter["pages_scraped"] = crawl["pages_scraped"]
+            chapter["source"] = "deep_crawl"
+        elif url in frontpages:
+            fp = frontpages[url]
+            chapter["text"] = fp.get("text", "")
+            chapter["pages_scraped"] = 1
+            chapter["source"] = "frontpage"
+        else:
+            chapter["text"] = ""
+            chapter["pages_scraped"] = 0
+            chapter["source"] = "none"
+
+        chapters.append(chapter)
+
+    deep_count = sum(1 for c in chapters if c["source"] == "deep_crawl")
+    fp_count = sum(1 for c in chapters if c["source"] == "frontpage")
+    none_count = sum(1 for c in chapters if c["source"] == "none")
+    log.info(f"Loaded chapters: {deep_count} deep crawl, {fp_count} frontpage only, {none_count} no data")
+
+    return chapters
+
+
+# ---------------------------------------------------------------------------
 # Content hashing for diff tracking
 # ---------------------------------------------------------------------------
 def content_hash(text: str) -> str:
@@ -78,7 +170,6 @@ def content_hash(text: str) -> str:
 
 
 def load_previous_hashes() -> dict[str, str]:
-    """Load content hashes from the previous analysis run."""
     if not PREVIOUS_PATH.exists():
         return {}
     with open(PREVIOUS_PATH) as f:
@@ -96,26 +187,30 @@ async def analyze_chapter(
     chapter: dict,
     semaphore: asyncio.Semaphore,
 ) -> dict:
-    """Analyze a single chapter's content."""
     async with semaphore:
         text = chapter["text"]
-        if not text or len(text) < 50:
+        if not text or len(text) < 100:
             return {
                 "chapter_name": chapter["chapter_name"],
                 "state_province": chapter.get("state_province", ""),
                 "country": chapter.get("country", ""),
                 "url": chapter["url"],
                 "content_hash": content_hash(text or ""),
+                "pages_scraped": chapter.get("pages_scraped", 0),
+                "source": chapter.get("source", ""),
                 "status": "skipped",
                 "reason": "insufficient content",
                 "findings": [],
                 "summary": "",
             }
 
+        source = chapter.get("source", "frontpage")
+        pages = chapter.get("pages_scraped", 1)
         user_msg = (
             f"Chapter: {chapter['chapter_name']}\n"
-            f"URL: {chapter['url']}\n\n"
-            f"Website content:\n{text[:8000]}"
+            f"URL: {chapter['url']}\n"
+            f"Data source: {pages} page(s) from website\n\n"
+            f"Website content:\n{text[:MAX_CONTENT_CHARS]}"
         )
 
         try:
@@ -130,7 +225,7 @@ async def analyze_chapter(
             analysis = resp.choices[0].message.parsed
             log.info(
                 f"  {chapter['chapter_name']}: "
-                f"{len(analysis.findings)} findings"
+                f"{len(analysis.findings)} findings ({source}, {pages}p)"
             )
             return {
                 "chapter_name": chapter["chapter_name"],
@@ -138,6 +233,8 @@ async def analyze_chapter(
                 "country": chapter.get("country", ""),
                 "url": chapter["url"],
                 "content_hash": content_hash(text),
+                "pages_scraped": pages,
+                "source": source,
                 "status": "analyzed",
                 "findings": [f.model_dump() for f in analysis.findings],
                 "summary": analysis.summary,
@@ -150,6 +247,8 @@ async def analyze_chapter(
                 "country": chapter.get("country", ""),
                 "url": chapter["url"],
                 "content_hash": content_hash(text),
+                "pages_scraped": chapter.get("pages_scraped", 0),
+                "source": chapter.get("source", ""),
                 "status": "error",
                 "reason": str(e)[:200],
                 "findings": [],
@@ -163,8 +262,7 @@ async def run_analysis(diff_only: bool = False):
     concurrency = config["concurrency"]
     system_prompt = config["prompts"]["analyze"]
 
-    with open(SCRAPED_PATH) as f:
-        chapters = json.load(f)
+    chapters = load_chapters()
 
     # Filter to only changed content if diff mode
     prev_hashes = load_previous_hashes()
@@ -174,9 +272,7 @@ async def run_analysis(diff_only: bool = False):
             ch for ch in chapters
             if content_hash(ch.get("text", "")) != prev_hashes.get(ch["url"], "")
         ]
-        log.info(
-            f"Diff mode: {len(chapters)} changed out of {original_count}"
-        )
+        log.info(f"Diff mode: {len(chapters)} changed out of {original_count}")
     else:
         log.info(f"Full analysis: {len(chapters)} chapters")
 
@@ -200,10 +296,7 @@ async def run_analysis(diff_only: bool = False):
                 prev_ch["status"] = "unchanged"
                 results.append(prev_ch)
 
-    # Sort by chapter name
     results.sort(key=lambda r: r["chapter_name"])
-
-    # Build cross-chapter patterns
     patterns = build_patterns(results)
 
     output = {
@@ -217,7 +310,6 @@ async def run_analysis(diff_only: bool = False):
         "chapters": results,
     }
 
-    # Rotate current → previous
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if ANALYSIS_PATH.exists():
         ANALYSIS_PATH.rename(PREVIOUS_PATH)
@@ -235,7 +327,7 @@ async def run_analysis(diff_only: bool = False):
 
 
 def build_patterns(results: list[dict]) -> dict:
-    """Identify cross-chapter patterns."""
+    """Identify cross-chapter patterns and gaps."""
     flywheel_counts = {"adoption": 0, "advocacy": 0, "contribution": 0, "retention": 0}
     action_counts = {}
     chapters_with_findings = 0
@@ -254,10 +346,23 @@ def build_patterns(results: list[dict]) -> dict:
         else:
             chapters_without += 1
 
-    # Top findings worth amplifying/replicating
+    # Notable = amplify or replicate (the most actionable)
     notable = [
         f for f in all_findings
-        if f["suggested_action"] in ("amplify", "replicate", "recognize")
+        if f["suggested_action"] in ("amplify", "replicate")
+    ]
+    # Then add recognize, but cap total at 25
+    if len(notable) < 25:
+        recognize = [f for f in all_findings if f["suggested_action"] == "recognize"]
+        notable.extend(recognize[:25 - len(notable)])
+
+    # Gaps: chapters with no findings or only no_action
+    gaps = [
+        r["chapter_name"] for r in results
+        if r["status"] == "analyzed" and (
+            not r["findings"] or
+            all(f["suggested_action"] == "no_action" for f in r["findings"])
+        )
     ]
 
     return {
@@ -265,7 +370,8 @@ def build_patterns(results: list[dict]) -> dict:
         "action_counts": action_counts,
         "chapters_with_findings": chapters_with_findings,
         "chapters_without_findings": chapters_without,
-        "notable_findings": notable[:20],
+        "notable_findings": notable[:25],
+        "gaps": gaps,
     }
 
 
