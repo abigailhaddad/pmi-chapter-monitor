@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Scraped data (large, regenerable)
+frontpages.json
+scraped_data/
+
+# Logs
+scrape_log.txt
+
+# IDE / tools
+.playwright-mcp/
+.claude/
