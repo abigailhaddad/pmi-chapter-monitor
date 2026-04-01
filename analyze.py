@@ -72,6 +72,8 @@ class Finding(BaseModel):
     flywheel_element: FlywheelElement
     why_it_matters: str
     suggested_action: CEPAction
+    source_url: str = ""
+    evidence_text: str = ""
 
 
 class ChapterAnalysis(BaseModel):
@@ -128,9 +130,12 @@ def load_chapters() -> list[dict]:
                 text = page.get("text", "").strip()
                 if not text or len(text) < 50:
                     continue
-                # Add page with its title as a header
+                # Add page with its title and URL as a header
                 title = page.get("title", "")
-                section = f"=== {title} ===\n{text}" if title else text
+                page_url = page.get("url", "")
+                header_parts = [p for p in [title, page_url] if p]
+                header = " | ".join(header_parts)
+                section = f"=== {header} ===\n{text}" if header else text
                 if total_chars + len(section) > MAX_CONTENT_CHARS:
                     # Add as much as we can fit
                     remaining = MAX_CONTENT_CHARS - total_chars

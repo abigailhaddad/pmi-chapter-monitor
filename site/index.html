@@ -5,80 +5,276 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PMI Chapter Engagement Monitor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <style>
+        .dataTables_wrapper .row { margin: 0; }
+        .dataTables_wrapper .row > div { padding: 0; }
+    </style>
 </head>
 <body>
-    <header>
-        <div class="container">
+    <div class="site-container">
+        <header class="site-header">
             <h1>PMI Chapter Engagement Monitor</h1>
-            <p class="subtitle">Tracking flywheel activity across North America chapters</p>
+            <p class="site-subtitle">Flywheel activity across North America chapters</p>
             <p class="last-updated" id="lastUpdated"></p>
-        </div>
-    </header>
+        </header>
 
-    <main class="container">
-        <!-- Summary Stats -->
-        <section id="overview" class="section">
-            <div class="stats-grid" id="statsGrid"></div>
-        </section>
-
-        <!-- Flywheel Breakdown -->
-        <section class="section">
-            <h2>Flywheel Activity</h2>
-            <div class="flywheel-grid" id="flywheelGrid"></div>
-        </section>
-
-        <!-- Notable Findings -->
-        <section class="section">
-            <h2>Notable Findings</h2>
-            <p class="section-desc">Activities worth amplifying, replicating, or recognizing across the network.</p>
-            <div id="notableFindings"></div>
-        </section>
-
-        <!-- Filters -->
-        <section class="section">
-            <h2>All Chapters</h2>
-            <div class="filters">
-                <select id="filterFlywheel" class="form-select form-select-sm">
-                    <option value="">All flywheel elements</option>
-                    <option value="adoption">Adoption</option>
-                    <option value="advocacy">Advocacy</option>
-                    <option value="contribution">Contribution</option>
-                    <option value="retention">Retention</option>
-                </select>
-                <select id="filterAction" class="form-select form-select-sm">
-                    <option value="">All actions</option>
-                    <option value="amplify">Amplify</option>
-                    <option value="recognize">Recognize</option>
-                    <option value="follow_up">Follow up</option>
-                    <option value="replicate">Replicate</option>
-                    <option value="no_action">No action</option>
-                </select>
-                <select id="filterCountry" class="form-select form-select-sm">
-                    <option value="">All locations</option>
-                    <option value="US">US</option>
-                    <option value="Canada">Canada</option>
-                </select>
-                <input type="text" id="filterSearch" class="form-control form-control-sm" placeholder="Search chapters...">
+        <!-- Toolbar + Filter Bar -->
+        <div id="toolbarButtons" class="toolbar-row"></div>
+        <div class="filters-bar-container">
+            <div class="filters-bar" id="filtersBar">
+                <span class="filters-bar-empty">No filters applied</span>
             </div>
-            <div id="chapterList"></div>
-        </section>
-
-        <!-- Cross-chapter Patterns -->
-        <section class="section">
-            <h2>Cross-Chapter Patterns</h2>
-            <div id="patterns"></div>
-        </section>
-    </main>
-
-    <footer>
-        <div class="container">
-            <p>PMI Chapter Engagement Monitor &middot; Updated weekly via GitHub Actions</p>
         </div>
-    </footer>
 
-    <script type="module" src="js/main.js"></script>
+        <!-- Stats Cards -->
+        <div class="stats-row" id="statsRow"></div>
+
+        <!-- Data Table -->
+        <div class="table-scroll-wrapper">
+            <table id="findingsTable" class="table" style="width:100%">
+                <thead>
+                    <tr>
+                        <th>Chapter</th>
+                        <th>Location</th>
+                        <th>Flywheel</th>
+                        <th>Activity</th>
+                        <th>Why It Matters</th>
+                        <th>Action</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+
+        <footer class="site-footer">
+            <p>PMI Chapter Engagement Monitor &middot; Updated weekly</p>
+        </footer>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="shared.js"></script>
+    <script>
+        const COLUMNS = [
+            { name: 'Chapter', field: 'chapter', filterType: 'multiselect', index: 0 },
+            { name: 'Location', field: 'location', filterType: 'multiselect', index: 1 },
+            { name: 'Flywheel', field: 'flywheel', filterType: 'multiselect', index: 2 },
+            { name: 'Activity', field: 'activity', filterType: 'text', index: 3 },
+            { name: 'Why It Matters', field: 'why', filterType: null, index: 4 },
+            { name: 'Action', field: 'action', filterType: 'multiselect', index: 5 },
+            { name: 'Status', field: 'status', filterType: 'multiselect', index: 6 },
+        ];
+
+        let DATA = null;
+        let PREV_KEYS = new Set();
+
+        async function init() {
+            try {
+                const resp = await fetch('data/analysis.json');
+                DATA = await resp.json();
+            } catch (e) {
+                document.querySelector('.site-container').innerHTML =
+                    '<p style="padding:2rem;color:var(--color-error)">Could not load analysis data.</p>';
+                return;
+            }
+
+            // Load previous analysis to detect new findings
+            try {
+                const prevResp = await fetch('data/previous_analysis.json');
+                const prev = await prevResp.json();
+                for (const ch of (prev.chapters || [])) {
+                    for (const f of (ch.findings || [])) {
+                        PREV_KEYS.add(ch.chapter_name + '|||' + f.activity);
+                    }
+                }
+            } catch (e) { /* no previous data, everything is new */ }
+
+            renderLastUpdated();
+            renderStats();
+
+            const rows = buildRows();
+            const filterManager = new ClientFilterManager({
+                columns: COLUMNS,
+                filterBarId: 'filtersBar',
+                syncURL: true,
+                showCopyLinkButton: true,
+                onFilterChange: updateStats,
+            });
+
+            // Precompute filter options
+            filterManager.setOptions('chapter', [...new Set(rows.map(r => r[0]))].sort());
+            filterManager.setOptions('flywheel', [...new Set(rows.map(r => r[2]))].sort());
+            filterManager.setOptions('action', [...new Set(rows.map(r => r[5]))].sort());
+            filterManager.setOptions('location', [...new Set(rows.map(r => r[1]))].sort());
+            filterManager.setOptions('status', ['New', '']);
+
+            const table = $('#findingsTable').DataTable({
+                data: rows,
+                columns: [
+                    { data: 0 },
+                    { data: 1 },
+                    {
+                        data: 2,
+                        render: function(data) {
+                            return '<span class="badge-fw">' + escapeHtml(data) + '</span>';
+                        }
+                    },
+                    { data: 3 },
+                    { data: 4 },
+                    {
+                        data: 5,
+                        render: function(data) {
+                            const cls = data === 'amplify' ? ' amplify' : '';
+                            return '<span class="badge-action' + cls + '">' + escapeHtml(data).replace('_', ' ') + '</span>';
+                        }
+                    },
+                    {
+                        data: 6,
+                        render: function(data) {
+                            return data ? '<span class="badge-new">New</span>' : '';
+                        }
+                    },
+                    {
+                        data: null,
+                        orderable: false,
+                        searchable: false,
+                        className: 'detail-arrow-cell',
+                        render: function() {
+                            return '<span class="detail-arrow" title="View details">&#8250;</span>';
+                        }
+                    },
+                ],
+                pageLength: 25,
+                order: [[5, 'asc'], [0, 'asc']],
+                language: {
+                    emptyTable: 'No findings match these filters',
+                    zeroRecords: 'No findings match these filters',
+                },
+                dom: '<"d-flex justify-content-between align-items-center"lip>rt<"d-flex justify-content-between align-items-center"lip>',
+                pagingType: 'simple',
+            });
+
+            filterManager.init(table);
+
+            // Row click → detail modal
+            $('#findingsTable tbody').on('click', 'tr', function () {
+                const rowData = table.row(this).data();
+                if (!rowData) return;
+                // Match back to FINDINGS_DETAIL by content
+                const detail = FINDINGS_DETAIL.find(d =>
+                    d.chapter_name === rowData[0] && d.activity === rowData[3]
+                );
+                if (detail) openDetailModal(detail);
+            });
+
+        }
+
+        // Store full finding objects for modal detail view
+        let FINDINGS_DETAIL = [];
+
+        function buildRows() {
+            const rows = [];
+            FINDINGS_DETAIL = [];
+            for (const ch of DATA.chapters) {
+                if (!ch.findings || !ch.findings.length) continue;
+                const location = [ch.state_province, ch.country].filter(Boolean).join(', ');
+                for (const f of ch.findings) {
+                    const key = ch.chapter_name + '|||' + f.activity;
+                    const isNew = !PREV_KEYS.has(key);
+                    rows.push([
+                        ch.chapter_name,
+                        location,
+                        f.flywheel_element,
+                        f.activity,
+                        f.why_it_matters,
+                        f.suggested_action,
+                        isNew ? 'New' : '',
+                    ]);
+                    FINDINGS_DETAIL.push({
+                        chapter_name: ch.chapter_name,
+                        chapter_url: ch.url,
+                        location: location,
+                        flywheel_element: f.flywheel_element,
+                        activity: f.activity,
+                        why_it_matters: f.why_it_matters,
+                        suggested_action: f.suggested_action,
+                        source_url: f.source_url || ch.url,
+                        evidence_text: f.evidence_text || '',
+                    });
+                }
+            }
+            return rows;
+        }
+
+        function renderLastUpdated() {
+            if (DATA.generated_at) {
+                const d = new Date(DATA.generated_at);
+                document.getElementById('lastUpdated').textContent =
+                    'Last updated: ' + d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+            }
+        }
+
+        function renderStats() {
+            const totalFindings = DATA.chapters.reduce((n, ch) => n + (ch.findings?.length || 0), 0);
+            const fc = DATA.patterns?.flywheel_counts || {};
+            const stats = [
+                { number: DATA.total_chapters, label: 'Chapters' },
+                { number: totalFindings, label: 'Findings' },
+                { number: fc.adoption || 0, label: 'Adoption' },
+                { number: fc.advocacy || 0, label: 'Advocacy' },
+                { number: fc.contribution || 0, label: 'Contribution' },
+                { number: fc.retention || 0, label: 'Retention' },
+            ];
+            document.getElementById('statsRow').innerHTML = stats.map(s =>
+                '<div class="stat-card"><h3>' + s.label + '</h3><div class="stat-value">' + s.number + '</div></div>'
+            ).join('');
+        }
+
+        function updateStats() {
+            // Could update stat cards based on filtered data if desired
+        }
+
+
+        function openDetailModal(detail) {
+            const sourceUrl = detail.source_url || detail.chapter_url;
+            const hasEvidence = detail.evidence_text && detail.evidence_text.trim();
+
+            const content = '<div class="detail-popover">'
+                + '<div class="detail-header">'
+                + '<h3>' + escapeHtml(detail.chapter_name) + '</h3>'
+                + '<span class="badge-fw">' + escapeHtml(detail.flywheel_element) + '</span> '
+                + '<span class="badge-action' + (detail.suggested_action === 'amplify' ? ' amplify' : '') + '">'
+                + escapeHtml(detail.suggested_action).replace('_', ' ') + '</span>'
+                + '</div>'
+                + '<div class="detail-section"><div class="detail-label">Activity</div>'
+                + '<p>' + escapeHtml(detail.activity) + '</p></div>'
+                + '<div class="detail-section"><div class="detail-label">Why It Matters</div>'
+                + '<p>' + escapeHtml(detail.why_it_matters) + '</p></div>'
+                + (hasEvidence
+                    ? '<div class="detail-section"><div class="detail-label">Original Text from Site</div>'
+                      + '<blockquote class="detail-evidence">' + escapeHtml(detail.evidence_text) + '</blockquote></div>'
+                    : '<div class="detail-section detail-no-evidence"><em>No source text available — re-run analysis to populate.</em></div>')
+                + '<div class="detail-section"><div class="detail-label">Source</div>'
+                + '<a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener">'
+                + escapeHtml(sourceUrl) + '</a></div>'
+                + '<div class="detail-buttons">'
+                + '<a class="btn btn-visit" href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener">Visit Page</a>'
+                + '</div>'
+                + '</div>';
+
+            createModal({ content });
+        }
+
+        init();
+    </script>
 </body>
 </html>

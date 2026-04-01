@@ -22,3 +22,6 @@ scrape_log.txt
 # IDE / tools
 .playwright-mcp/
 .claude/
+
+# Local Netlify folder
+.netlify

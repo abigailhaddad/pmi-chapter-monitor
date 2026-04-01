@@ -42,6 +42,12 @@ prompts:
 
     If you apply "amplify" to more than one finding per chapter, you're not being selective enough.
 
+    For each finding, you MUST also provide:
+    - source_url: the specific page URL where you found this activity (from the === header ===
+      lines in the content). Use the chapter's main URL only if no specific page URL is available.
+    - evidence_text: a direct quote or close paraphrase (1-3 sentences) from the original website
+      content that supports this finding. This is used for human validation — be faithful to the source.
+
     Quality over quantity: 2-4 specific, actionable findings are better than 6 generic ones.
     Return an empty findings list if nothing stands out beyond standard chapter operations.
 
