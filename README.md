@@ -2,7 +2,7 @@
 
 Monitors ~150 PMI chapter websites, uses AI to find noteworthy activities, and publishes a filterable report.
 
-**Live site:** [pmi-chapter-monitor.netlify.app](https://pmi-chapter-monitor.netlify.app)
+**Live site:** [pmi-chapter-monitor.abigailhaddad.com](https://pmi-chapter-monitor.abigailhaddad.com)
 
 ## How it works
 
