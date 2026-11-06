@@ -370,3 +370,8 @@ table.dataTable tbody tr:hover .detail-arrow { color: var(--color-accent); trans
     .toolbar-row { flex-wrap: wrap; }
     table.dataTable { min-width: 900px; }
 }
+
+/* three stat cards across are too wide for a phone: two across */
+@media (max-width: 480px) {
+    .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
