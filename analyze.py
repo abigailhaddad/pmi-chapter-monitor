@@ -301,6 +301,17 @@ async def run_analysis(diff_only: bool = False):
                 prev_ch["status"] = "unchanged"
                 results.append(prev_ch)
 
+    # A chapter whose analysis failed this run keeps its last good entry (and its old
+    # content_hash, so --diff-only retries it) instead of overwriting it with an empty error.
+    if ANALYSIS_PATH.exists():
+        with open(ANALYSIS_PATH) as f:
+            last_good = {ch["url"]: ch for ch in json.load(f).get("chapters", [])
+                         if ch.get("status") in ("analyzed", "unchanged")}
+        for i, r in enumerate(results):
+            if r["status"] == "error" and r["url"] in last_good:
+                log.warning(f"  {r['chapter_name']}: keeping previous analysis after error")
+                results[i] = last_good[r["url"]]
+
     results.sort(key=lambda r: r["chapter_name"])
     patterns = build_patterns(results)
 
