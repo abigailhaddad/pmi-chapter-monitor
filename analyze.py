@@ -290,6 +290,15 @@ async def run_analysis(diff_only: bool = False):
     ]
     results = await asyncio.gather(*tasks)
 
+    # If every chapter that had content failed (bad API key, quota, outage), writing the
+    # results would replace the last good analysis.json with an all-error file, and the
+    # weekly workflow would commit and deploy it. Stop before touching anything.
+    n_ok = sum(1 for r in results if r["status"] == "analyzed")
+    n_err = sum(1 for r in results if r["status"] == "error")
+    if n_err and not n_ok:
+        log.error(f"All {n_err} analyses failed; leaving {ANALYSIS_PATH} unchanged")
+        raise SystemExit(1)
+
     # If diff mode, merge with previous results for unchanged chapters
     if diff_only and PREVIOUS_PATH.exists():
         with open(PREVIOUS_PATH) as f:
